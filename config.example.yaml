@@ -1,0 +1,6 @@
+# add your services
+
+services:
+  - "https://service1.com"
+  - "https://service2.com"
+  - "https://service3.com"
