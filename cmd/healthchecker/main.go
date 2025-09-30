@@ -32,6 +32,8 @@ func main() {
 	// load config
 	cfg := config.MustLoad(configPath)
 
+	stopCh := make(chan struct{})
+
 	// init pool
 	resultsCh := make(chan workerpool.Result, 100)
 	pool := workerpool.New(WORKERS_COUNT, REQUEST_TIMEOUT, resultsCh)
@@ -43,33 +45,46 @@ func main() {
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// generating jobs
-	go generateJobs(pool, cfg.Services)
+	go generateJobs(pool, cfg.Services, stopCh)
 
 	// print results
-	go processResults(resultsCh)
+	go processResults(resultsCh, stopCh)
 
 	<-sigChan
+	close(stopCh)
 	pool.Stop()
 }
 
-func generateJobs(pool *workerpool.Pool, urls []string) {
+func generateJobs(pool *workerpool.Pool, urls []string, stopCh chan struct{}) {
 	ticker := time.NewTicker(INTERVAL)
 	defer ticker.Stop()
 
+	// for first time, launch jobs immediately
 	for _, url := range urls {
 		pool.Push(workerpool.Job{URL: url})
 	}
 
-	for range ticker.C {
-		for _, url := range urls {
-			pool.Push(workerpool.Job{URL: url})
+	for {
+		select {
+		case <-stopCh:
+			return
+		case <-ticker.C:
+			for _, url := range urls {
+				pool.Push(workerpool.Job{URL: url})
+			}
 		}
+
 	}
 
 }
 
-func processResults(resultCh chan workerpool.Result) {
-	for result := range resultCh {
-		fmt.Println(result.Info())
+func processResults(resultCh chan workerpool.Result, stopCh chan struct{}) {
+	for {
+		select {
+		case <-stopCh:
+			return
+		case result := <-resultCh:
+			fmt.Println(result)
+		}
 	}
 }

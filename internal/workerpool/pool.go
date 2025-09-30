@@ -1,6 +1,7 @@
 package workerpool
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"sync"
@@ -18,11 +19,11 @@ type Result struct {
 	Error        error
 }
 
-func (r Result) Info() string {
+func (r Result) String() string {
 	if r.Error != nil {
-		return fmt.Sprintf("[ERROR] %s | error message: %s", r.URL, r.Error.Error())
+		return fmt.Sprintf("[ERROR] - [%s] Error Message: %s", r.URL, r.Error.Error())
 	}
-	return fmt.Sprintf("[OK] %s | status code: %d | response time: %v", r.URL, r.StatusCode, r.ResponseTime)
+	return fmt.Sprintf("[SUCCESS] - [%s] Status Code: %d | Response Time: %v", r.URL, r.StatusCode, r.ResponseTime)
 }
 
 type Pool struct {
@@ -32,11 +33,13 @@ type Pool struct {
 	jobsCh    chan Job
 	resultsCh chan Result
 
-	wg        *sync.WaitGroup
-	stoppedCh chan struct{}
+	wg     *sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func New(workersCount int, timeout time.Duration, resultsCh chan Result) *Pool {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &Pool{
 		worker:       newWorker(timeout),
 		workersCount: workersCount,
@@ -44,26 +47,26 @@ func New(workersCount int, timeout time.Duration, resultsCh chan Result) *Pool {
 		jobsCh:    make(chan Job, 100), // max count of services being checked at one time
 		resultsCh: resultsCh,
 
-		wg:        new(sync.WaitGroup),
-		stoppedCh: make(chan struct{}),
+		wg:     new(sync.WaitGroup),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 }
 
 func (p *Pool) initWorker(id int) {
 	defer func() {
-		log.Printf("[FINISH] worker %d | finished processing", id)
+		fmt.Printf("[FINISH] - [Worker %d] finished processing\n", id)
 		p.wg.Done()
 	}()
 
 	for {
 		select {
-		case <-p.stoppedCh:
+		case <-p.ctx.Done():
 			return
 		case job, ok := <-p.jobsCh:
 			if !ok {
 				return
 			}
-
 			p.resultsCh <- p.worker.process(job)
 		}
 	}
@@ -71,7 +74,6 @@ func (p *Pool) initWorker(id int) {
 }
 
 func (p *Pool) Init() {
-	p.wg.Add(p.workersCount)
 	for i := 0; i < p.workersCount; i++ {
 		go p.initWorker(i + 1)
 	}
@@ -79,20 +81,18 @@ func (p *Pool) Init() {
 
 func (p *Pool) Push(j Job) {
 	select {
-	case <-p.stoppedCh:
+	case <-p.ctx.Done():
 		return
 	case p.jobsCh <- j:
-
+		p.wg.Add(1)
 	default:
 		log.Printf("Job queue is full, dropping job: %s", j.URL)
 	}
 }
 
 func (p *Pool) Stop() {
-	close(p.stoppedCh)
+	p.cancel()
 	close(p.jobsCh)
-
 	p.wg.Wait()
-
 	close(p.resultsCh)
 }

@@ -20,17 +20,15 @@ func newWorker(timeout time.Duration) *Worker {
 func (w *Worker) process(j Job) Result {
 	result := Result{URL: j.URL}
 
-	now := time.Now()
+	start := time.Now()
 
 	resp, err := w.client.Get(j.URL)
+	result.ResponseTime = time.Since(start)
 	if err != nil {
 		result.Error = err
-
 		return result
 	}
 
 	result.StatusCode = resp.StatusCode
-	result.ResponseTime = time.Since(now)
-
 	return result
 }
